@@ -4,7 +4,7 @@
 
 화자와 구간이 정리된 녹취를 올리면, 이번 대화에서 나온 주제로 구조화하고 회의록 초안을 만든 뒤, 확정된 회의록만 자료실에 회의(case)별로 쌓습니다.
 
-데이터는 Firebase Auth(Google)와 Firestore에 사용자별로 저장됩니다. 음성 원본은 Firebase Storage에 남기고, 전사는 Gemini Files API를 쓰니다. 분석·교차 요약·챗봇도 Gemini입니다. 서버에 `GEMINI_API_KEY`가 있으면 그 키로 호출하고, 없으면 브라우저의 Firebase AI(Gemini)로 이어갑니다.
+데이터는 Firebase Auth(Google)와 Firestore에 사용자별로 저장됩니다. 음성 원본은 Firebase Storage에 남기고, 전사는 Gemini Files API를 쓠니다. 분석·교차 요약·챗봇도 Gemini입니다. 서버에 `GEMINI_API_KEY`가 있으면 그 키로 호출하고, 없으면 브라우저의 Firebase AI(Gemini)로 이어갑니다.
 
 ## 할 수 있는 일
 

@@ -28,7 +28,7 @@ export const storage = getStorage(app);
 
 let memToken: string | null = null;
 
- if (typeof window !== "undefined") {
+if (typeof window !== "undefined") {
   onIdTokenChanged(auth, async (user) => {
     if (user) {
       const token = await user.getIdToken();
