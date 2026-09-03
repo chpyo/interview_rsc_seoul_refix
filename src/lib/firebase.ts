@@ -9,6 +9,7 @@ import {
   onIdTokenChanged,
 } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
+import { getStorage } from "firebase/storage";
 import firebaseConfigRaw from "../../firebase-applet-config.json";
 
 const firebaseConfig = {
@@ -23,10 +24,11 @@ const firebaseConfig = {
 export const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0]!;
 export const auth = getAuth(app);
 export const db = getFirestore(app, firebaseConfigRaw.firestoreDatabaseId || "(default)");
+export const storage = getStorage(app);
 
 let memToken: string | null = null;
 
-if (typeof window !== "undefined") {
+ if (typeof window !== "undefined") {
   onIdTokenChanged(auth, async (user) => {
     if (user) {
       const token = await user.getIdToken();

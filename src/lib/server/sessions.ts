@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { analyzeTranscript, rewriteMinutesFromThemes } from "@/lib/ai/analyze";
-import { chatWithProjectData } from "@/lib/ai/chat";
+import { chatWithConfirmedCases } from "@/lib/ai/chat";
+import type { ChatCaseContext, RelatedCase } from "@/lib/types";
 import { synthesizeProject } from "@/lib/ai/cross";
 import type { CrossSummary } from "@/lib/types";
 
@@ -64,20 +65,22 @@ export const generateCrossSummary = createServerFn({ method: "POST" })
 export const askProjectAssistant = createServerFn({ method: "POST" })
   .validator(
     (input: {
-      projectTitle: string;
+      projectTitle?: string;
       query: string;
-      sessions: Parameters<typeof chatWithProjectData>[0]["sessions"];
+      cases: ChatCaseContext[];
+      ranked: RelatedCase[];
     }) => input,
   )
   .handler(async ({ data }) => {
     try {
-      const answer = await chatWithProjectData(data);
-      return { ok: true as const, answer };
+      const reply = await chatWithConfirmedCases(data);
+      return { ok: true as const, ...reply };
     } catch (err) {
       return {
         ok: false as const,
         error: err instanceof Error ? err.message : "답변 생성 실패",
         answer: "",
+        relatedCases: [] as RelatedCase[],
       };
     }
   });
