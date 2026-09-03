@@ -12,34 +12,32 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { runProjectAssistant } from "@/lib/ai/run";
-import { listProjectAssistantContext } from "@/lib/firebase-db";
+import { RelatedCases } from "@/components/related-cases";
+import { askConfirmedCorpus } from "@/lib/ai/ask-corpus";
 import { useAuth } from "@/lib/auth-context";
+import type { RelatedCase } from "@/lib/types";
+
+type ChatMessage =
+  | { role: "user"; text: string }
+  | { role: "ai"; text: string; relatedCases: RelatedCase[] };
 
 export function ChatModal({ projectId, projectTitle }: { projectId: string; projectTitle: string }) {
   const { user } = useAuth();
   const uid = user?.uid;
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [history, setHistory] = useState<Array<{ role: "user" | "ai"; text: string }>>([]);
+  const [history, setHistory] = useState<ChatMessage[]>([]);
 
   const askMut = useMutation({
     mutationFn: async (question: string) => {
       if (!uid) throw new Error("로그인이 필요합니다.");
-      const sessionsData = await listProjectAssistantContext(uid, projectId);
-      const recent = history
-        .slice(-6)
-        .map((m) => `${m.role === "user" ? "사용자" : "어시스턴트"}: ${m.text}`)
-        .join("\n");
-      const asked = recent ? `${recent}\n사용자: ${question}` : question;
-      return runProjectAssistant({ projectTitle, query: asked, sessions: sessionsData });
+      return askConfirmedCorpus(uid, question, { projectId, projectTitle });
     },
     onSuccess: (res) => {
-      if (!res.ok) {
-        toast.error(res.error);
-        return;
-      }
-      setHistory((prev) => [...prev, { role: "ai", text: res.answer }]);
+      setHistory((prev) => [
+        ...prev,
+        { role: "ai", text: res.answer, relatedCases: res.relatedCases },
+      ]);
     },
     onError: (err: Error) => {
       toast.error(err.message);
@@ -65,9 +63,9 @@ export function ChatModal({ projectId, projectTitle }: { projectId: string; proj
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl flex flex-col h-[80vh] p-0 overflow-hidden">
         <DialogHeader className="px-6 py-4 border-b border-border bg-card shrink-0">
-          <DialogTitle>AI 리서치 어시스턴트</DialogTitle>
+          <DialogTitle>자료실에 묻기</DialogTitle>
           <DialogDescription>
-            분석·확정된 인터뷰를 바탕으로 Gemini가 답합니다.
+            확정된 회의록만 찾습니다. 비슷한 회의를 고르면 자료실로 갑니다.
           </DialogDescription>
         </DialogHeader>
 
@@ -81,17 +79,22 @@ export function ChatModal({ projectId, projectTitle }: { projectId: string; proj
               <div
                 key={i}
                 className={`flex flex-col max-w-[85%] ${
-                  msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"
+                  msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start w-full max-w-full"
                 }`}
               >
                 <span className="text-[11px] text-muted-foreground mb-1 px-1">
                   {msg.role === "user" ? "나" : "AI 어시스턴트"}
                 </span>
+                {msg.role === "ai" && msg.relatedCases.length > 0 ? (
+                  <div className="mb-2 w-full">
+                    <RelatedCases cases={msg.relatedCases} onOpen={() => setOpen(false)} />
+                  </div>
+                ) : null}
                 <div
                   className={`rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed ${
                     msg.role === "user"
                       ? "bg-primary text-primary-foreground rounded-tr-sm"
-                      : "bg-card border border-border rounded-tl-sm shadow-sm"
+                      : "bg-card border border-border rounded-tl-sm shadow-sm w-full"
                   }`}
                 >
                   {msg.text}
@@ -102,7 +105,7 @@ export function ChatModal({ projectId, projectTitle }: { projectId: string; proj
           {askMut.isPending && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground ml-2">
               <LoaderCircle className="size-4 animate-spin" />
-              답변을 작성하고 있습니다...
+              비슷한 회의를 찾고 있습니다...
             </div>
           )}
         </div>
