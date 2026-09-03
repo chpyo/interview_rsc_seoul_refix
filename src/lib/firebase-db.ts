@@ -12,15 +12,20 @@ import {
   type DocumentData,
 } from "firebase/firestore";
 import { db } from "./firebase";
+import { buildCorpusText, rankCorpus, type CorpusDoc, type CorpusHit } from "./ai/corpus";
+import { runEmbedText } from "./ai/run";
 import { parseTranscript, serializeSegments } from "./parse-transcript";
 import {
   emptyCross,
+  type ActionItem,
+  type ChatCaseContext,
   type CrossData,
   type CrossSummary,
   type Fact,
-  type LibraryHit,
+  type LibraryCaseFilter,
   type Project,
   type Segment,
+  type SessionAudio,
   type SessionDetail,
   type SessionStatus,
   type SessionSummary,
@@ -98,6 +103,32 @@ function mapProject(id: string, data: DocumentData): Project {
   };
 }
 
+function mapAudio(data: DocumentData): SessionAudio | null {
+  const storagePath = String(data.audio_storage_path ?? "").trim();
+  if (!storagePath) return null;
+  return {
+    storagePath,
+    mimeType: String(data.audio_mime_type ?? "audio/webm"),
+    filename: String(data.audio_filename ?? "recording.webm"),
+    sizeBytes: Number(data.audio_size_bytes ?? 0),
+    durationSec:
+      data.audio_duration_sec == null || data.audio_duration_sec === ""
+        ? null
+        : Number(data.audio_duration_sec),
+  };
+}
+
+function audioFields(audio?: SessionAudio | null) {
+  if (!audio) return {};
+  return {
+    audio_storage_path: audio.storagePath,
+    audio_mime_type: audio.mimeType,
+    audio_filename: audio.filename,
+    audio_size_bytes: audio.sizeBytes,
+    audio_duration_sec: audio.durationSec,
+  };
+}
+
 function mapSessionSummary(id: string, data: DocumentData): SessionSummary {
   const headline = String(data.headline ?? "");
   return {
@@ -113,7 +144,9 @@ function mapSessionSummary(id: string, data: DocumentData): SessionSummary {
     researcher: String(data.researcher ?? ""),
     status: asStatus(data.status, headline),
     headline,
+    minutesOverview: String(data.minutes_overview ?? data.minutesOverview ?? ""),
     originalFilename: String(data.original_filename ?? ""),
+    audio: mapAudio(data),
     tagLabels: asStringArray(data.tagLabels ?? data.tag_labels),
     createdAt: asIso(data.created_at),
     updatedAt: asIso(data.updated_at),
@@ -314,6 +347,7 @@ type CreateSessionInput = {
   filename?: string;
   originalText?: string;
   text?: string;
+  audio?: SessionAudio | null;
   segments?: Array<{ seq?: number; speaker: string; ts?: string; body: string; code?: string }>;
 };
 
@@ -332,7 +366,7 @@ export async function createSession(uid: string, data: CreateSessionInput) {
       ? data.segments
       : parseTranscript(originalText);
 
-  if (parsed.length === 0) throw new Error("읽을 구간이 없습니다.");
+  if (parsed.length === 0 && !data.audio) throw new Error("읽을 구간이 없습니다.");
 
   const id = newId("sess");
   const now = new Date().toISOString();
@@ -348,8 +382,9 @@ export async function createSession(uid: string, data: CreateSessionInput) {
     size_label: data.sizeLabel || "",
     district: data.district || "",
     researcher: data.researcher || "",
-    original_filename: data.originalFilename || data.filename || "",
+    original_filename: data.originalFilename || data.filename || data.audio?.filename || "",
     original_text: originalText,
+    ...audioFields(data.audio),
     status: "uploaded",
     headline: "",
     minutes_overview: "",
@@ -665,10 +700,28 @@ export async function setSessionAnalysisError(uid: string, id: string, error: st
 export async function confirmSession(uid: string, id: string) {
   const snap = await getDoc(doc(db, "sessions", id));
   const data = requireOwner(snap.data(), uid);
+  const detail = await getSession(uid, id);
+  const corpusText = buildCorpusText({
+    title: detail.title,
+    headline: detail.headline,
+    minutesOverview: detail.minutesOverview,
+    tags: detail.tagLabels,
+    themes: detail.themes,
+    facts: detail.facts,
+  });
+  let embedding: number[] | null = null;
+  try {
+    embedding = await runEmbedText(corpusText, "RETRIEVAL_DOCUMENT");
+  } catch {
+    embedding = null;
+  }
   await updateDoc(doc(db, "sessions", id), {
     status: "confirmed",
     confirmed_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
+    corpus_text: corpusText,
+    corpus_themes: detail.themes.map((t) => t.title),
+    corpus_embedding: embedding,
   });
   if (data.project_id) await refreshProjectStats(uid, String(data.project_id));
   return { ok: true };
@@ -689,6 +742,7 @@ export async function reopenSession(uid: string, id: string) {
 export async function deleteSession(uid: string, id: string) {
   const snap = await getDoc(doc(db, "sessions", id));
   const data = requireOwner(snap.data(), uid);
+  const audioPath = String(data.audio_storage_path ?? "");
   await Promise.all([
     deleteOwned(uid, "segments", id),
     deleteOwned(uid, "themes", id),
@@ -696,6 +750,10 @@ export async function deleteSession(uid: string, id: string) {
     deleteOwned(uid, "facts", id),
     deleteOwned(uid, "tags", id),
   ]);
+  if (audioPath) {
+    const { deleteUserAudio } = await import("./audio");
+    await deleteUserAudio(audioPath).catch(() => undefined);
+  }
   await deleteDoc(doc(db, "sessions", id));
   if (data.project_id) await refreshProjectStats(uid, String(data.project_id));
   return { ok: true };
@@ -717,79 +775,41 @@ export async function listTags(uid: string): Promise<{ label: string; count: num
     .sort((a, b) => b.count - a.count || a.label.localeCompare(b.label, "ko"));
 }
 
-export async function searchLibrary(uid: string, q: string, tag?: string): Promise<LibraryHit[]> {
-  const needle = q.trim().toLowerCase();
-  const sessions = (await listSessions(uid)).filter((s) => s.status === "confirmed");
-  const byId = new Map(sessions.map((s) => [s.id, s]));
-  const ids = new Set(sessions.map((s) => s.id));
-  if (ids.size === 0) return [];
-
-  const [excerpts, themes, facts] = await Promise.all([
-    ownedDocs(uid, "excerpts"),
-    ownedDocs(uid, "themes"),
-    ownedDocs(uid, "facts"),
-  ]);
-
-  const hasTag = (sid: string) => !tag || (byId.get(sid)?.tagLabels ?? []).includes(tag);
-  const matches = (...parts: string[]) => !needle || parts.join(" ").toLowerCase().includes(needle);
-
-  const hits: LibraryHit[] = [];
-  for (const t of themes) {
-    const sid = String(t.session_id);
-    const s = byId.get(sid);
-    if (!s || !hasTag(sid)) continue;
-    if (!matches(String(t.title ?? ""), String(t.summary ?? ""), asStringArray(t.bullets).join(" "))) continue;
-    hits.push({
-      kind: "theme",
-      id: t.id,
-      sessionId: sid,
-      sessionTitle: s.title,
-      projectTitle: s.projectTitle,
-      sessionDate: s.sessionDate,
-      title: String(t.title ?? ""),
-      body: String(t.summary ?? ""),
-      segmentCode: "",
-      tags: s.tagLabels,
-    });
+export async function listLibraryCases(
+  uid: string,
+  filter: LibraryCaseFilter = {},
+): Promise<SessionSummary[]> {
+  const needle = (filter.q ?? "").trim().toLowerCase();
+  const tag = filter.tag?.trim();
+  const projectId = filter.projectId?.trim();
+  let rows = (await listSessions(uid)).filter((s) => s.status === "confirmed");
+  if (projectId) rows = rows.filter((s) => s.projectId === projectId);
+  if (tag) rows = rows.filter((s) => s.tagLabels.includes(tag));
+  if (needle) {
+    rows = rows.filter((s) =>
+      [
+        s.title,
+        s.headline,
+        s.minutesOverview,
+        s.projectTitle,
+        s.sessionKind,
+        s.district,
+        s.industry,
+        s.researcher,
+        ...s.tagLabels,
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle),
+    );
   }
-  for (const e of excerpts) {
-    const sid = String(e.session_id);
-    const s = byId.get(sid);
-    if (!s || !hasTag(sid)) continue;
-    if (!matches(String(e.body ?? ""))) continue;
-    const theme = themes.find((t) => t.id === e.theme_id);
-    hits.push({
-      kind: "excerpt",
-      id: e.id,
-      sessionId: sid,
-      sessionTitle: s.title,
-      projectTitle: s.projectTitle,
-      sessionDate: s.sessionDate,
-      title: String(theme?.title ?? "인용"),
-      body: String(e.body ?? ""),
-      segmentCode: String(e.segment_code ?? ""),
-      tags: s.tagLabels,
-    });
-  }
-  for (const f of facts) {
-    const sid = String(f.session_id);
-    const s = byId.get(sid);
-    if (!s || !hasTag(sid)) continue;
-    if (!matches(String(f.label ?? ""), String(f.value ?? ""))) continue;
-    hits.push({
-      kind: "fact",
-      id: f.id,
-      sessionId: sid,
-      sessionTitle: s.title,
-      projectTitle: s.projectTitle,
-      sessionDate: s.sessionDate,
-      title: String(f.label ?? ""),
-      body: String(f.value ?? ""),
-      segmentCode: String(f.segment_code ?? ""),
-      tags: s.tagLabels,
-    });
-  }
-  return hits;
+  rows.sort((a, b) => {
+    if (a.sessionDate !== b.sessionDate) {
+      return (b.sessionDate || "").localeCompare(a.sessionDate || "");
+    }
+    return (b.confirmedAt || b.updatedAt || "").localeCompare(a.confirmedAt || a.updatedAt || "");
+  });
+  return rows;
 }
 
 function mapCrossSummary(value: unknown): CrossSummary | null {
@@ -888,15 +908,68 @@ export async function saveCrossSummary(uid: string, projectId: string, summary: 
   return { at: now };
 }
 
-export async function listProjectAssistantContext(uid: string, projectId: string) {
-  const sessions = (await listSessions(uid, projectId)).filter(
-    (s) => s.status === "confirmed" || s.status === "analyzed",
-  );
-  const details = await Promise.all(sessions.map((s) => getSession(uid, s.id)));
-  return details.map((d) => ({
-    title: d.title,
-    themes: d.themes.map((t) => ({ title: t.title, summary: t.summary })),
-    facts: d.facts.map((f) => ({ label: f.label, value: f.value })),
-    quotes: d.themes.flatMap((t) => t.quotes.map((q) => ({ text: q.text, themeTitle: t.title }))),
-  }));
+export async function searchConfirmedCases(
+  uid: string,
+  searchQuery: string,
+  opts?: { projectId?: string; limit?: number },
+): Promise<CorpusHit[]> {
+  const snap = await getDocs(query(collection(db, "sessions"), where("owner_uid", "==", uid)));
+  const docs: CorpusDoc[] = [];
+  for (const row of snap.docs) {
+    const data = row.data();
+    if (asStatus(data.status, String(data.headline ?? "")) !== "confirmed") continue;
+    if (opts?.projectId && String(data.project_id ?? "") !== opts.projectId) continue;
+    const title = String(data.title ?? "");
+    const headline = String(data.headline ?? "");
+    const minutesOverview = String(data.minutes_overview ?? data.minutesOverview ?? "");
+    const tagLabels = asStringArray(data.tagLabels ?? data.tag_labels);
+    const themeTitles = asStringArray(data.corpus_themes);
+    const corpusText =
+      String(data.corpus_text ?? "").trim() ||
+      buildCorpusText({ title, headline, minutesOverview, tags: tagLabels });
+    const embedding = Array.isArray(data.corpus_embedding)
+      ? data.corpus_embedding.map((n) => Number(n)).filter((n) => Number.isFinite(n))
+      : null;
+    docs.push({
+      sessionId: row.id,
+      sessionTitle: title,
+      projectId: String(data.project_id ?? ""),
+      projectTitle: String(data.projectTitle ?? data.project_title ?? ""),
+      sessionDate: data.session_date ? String(data.session_date) : null,
+      headline,
+      corpusText,
+      themeTitles,
+      embedding: embedding && embedding.length > 0 ? embedding : null,
+    });
+  }
+  let queryEmbedding: number[] | null = null;
+  try {
+    queryEmbedding = await runEmbedText(searchQuery, "RETRIEVAL_QUERY");
+  } catch {
+    queryEmbedding = null;
+  }
+  return rankCorpus(searchQuery, docs, queryEmbedding, opts?.limit ?? 5);
+}
+
+export async function loadChatCaseContext(uid: string, sessionIds: string[]): Promise<ChatCaseContext[]> {
+  const out: ChatCaseContext[] = [];
+  for (const id of sessionIds) {
+    const d = await getSession(uid, id);
+    if (d.status !== "confirmed") continue;
+    out.push({
+      sessionId: d.id,
+      title: d.title,
+      projectTitle: d.projectTitle,
+      sessionDate: d.sessionDate,
+      headline: d.headline,
+      minutesOverview: d.minutesOverview,
+      themes: d.themes.map((t) => ({
+        title: t.title,
+        summary: t.summary,
+        quotes: t.quotes.map((q) => ({ text: q.text, segmentId: q.segmentId })),
+      })),
+      facts: d.facts.map((f) => ({ label: f.label, value: f.value, segmentCode: f.segmentCode })),
+    });
+  }
+  return out;
 }
