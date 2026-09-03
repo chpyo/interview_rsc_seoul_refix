@@ -3,6 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight, Plus } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { EmptyState } from "@/components/empty-state";
 import { StatusBadge } from "@/components/status-badge";
 import { NativeSelect } from "@/components/native-select";
 import { Button } from "@/components/ui/button";
@@ -46,18 +47,17 @@ function Home() {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="flex flex-col gap-8">
+    <div className="flex flex-col gap-10">
       <section className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-xl">
-          <p className="text-xs font-medium tracking-wide text-primary uppercase">
-            서울 현장조사
-          </p>
-          <h1 className="mt-1 font-serif text-3xl font-semibold tracking-tight sm:text-4xl">
+          <h1 className="font-serif text-4xl font-semibold tracking-tight sm:text-5xl">
             녹취를 근거로 남깁니다
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-            화자가 정리된 텍스트를 올리면, 이번 대화에서 나온 주제로 회의록 초안을 만들고
-            확정본만 자료실에 쌓습니다.
+            이번 대화에서 나온 주제로 회의록 초안을 만들고, 확정본만 자료실에 회의별로 쌓습니다.
+          </p>
+          <p className="mt-3 text-sm tabular-nums text-muted-foreground">
+            프로젝트 {projects.length} · 확정 {confirmed} · 초안 {drafts}
           </p>
         </div>
         <div className="flex gap-2">
@@ -74,50 +74,42 @@ function Home() {
         </div>
       </section>
 
-      <section className="grid grid-cols-3 gap-3">
-        {[
-          { label: "프로젝트", value: projects.length },
-          { label: "확정", value: confirmed },
-          { label: "초안·원문", value: drafts },
-        ].map((stat) => (
-          <Card key={stat.label} className="rounded-lg">
-            <CardContent className="p-4">
-              <p className="text-xs text-muted-foreground">{stat.label}</p>
-              <p className="mt-1 font-serif text-2xl font-semibold tabular-nums">
-                {stat.value}
-              </p>
-            </CardContent>
-          </Card>
-        ))}
-      </section>
-
       <section className="flex flex-col gap-3">
-        <div className="flex items-baseline justify-between">
-          <h2 className="font-serif text-xl font-semibold">프로젝트</h2>
-        </div>
+        <h2 className="font-serif text-xl font-semibold">프로젝트</h2>
         {projects.length === 0 ? (
-          <Empty label="아직 프로젝트가 없습니다." />
+          <EmptyState
+            action={
+              <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
+                프로젝트 만들기
+              </Button>
+            }
+          >
+            아직 프로젝트가 없습니다. 연도·유형으로 조사 단위를 나누세요.
+          </EmptyState>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {projects.map((p) => (
               <Link key={p.id} to="/projects/$projectId" params={{ projectId: p.id }}>
-                <Card className="h-full rounded-lg transition-colors hover:border-primary/40">
+                <Card className="h-full transition-colors hover:border-primary/40">
                   <CardContent className="flex h-full flex-col gap-3 p-5">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <p className="text-xs text-muted-foreground">
-                          {p.year ?? "연도 미정"} · {p.kind}
-                        </p>
-                        <h3 className="mt-1 font-serif text-lg font-semibold">{p.title}</h3>
+                        <div className="flex flex-wrap gap-1.5">
+                          <span className="rounded-sm border border-primary/25 px-1.5 py-0.5 text-xs tracking-wide text-primary">
+                            {p.year ?? "연도 미정"}
+                          </span>
+                          <span className="rounded-sm border border-border px-1.5 py-0.5 text-xs text-muted-foreground">
+                            {p.kind}
+                          </span>
+                        </div>
+                        <h3 className="mt-2 font-serif text-lg font-semibold">{p.title}</h3>
                       </div>
                       <span className="text-xs tabular-nums text-muted-foreground">
                         {p.confirmedCount}/{p.sessionCount}
                       </span>
                     </div>
                     {p.description ? (
-                      <p className="line-clamp-2 text-sm text-muted-foreground">
-                        {p.description}
-                      </p>
+                      <p className="line-clamp-2 text-sm text-muted-foreground">{p.description}</p>
                     ) : null}
                   </CardContent>
                 </Card>
@@ -128,22 +120,35 @@ function Home() {
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="font-serif text-xl font-semibold">최근 인터뷰</h2>
+        <h2 className="font-serif text-xl font-semibold">최근 기록</h2>
         {sessions.length === 0 ? (
-          <Empty label="업로드된 녹취가 없습니다." />
+          <EmptyState
+            action={
+              <Button asChild variant="outline" size="sm">
+                <Link to="/upload" search={{ projectId: undefined }}>
+                  새 녹취
+                </Link>
+              </Button>
+            }
+          >
+            업로드된 녹취가 없습니다. 녹취를 올리면 여기에 쌓입니다.
+          </EmptyState>
         ) : (
-          <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+          <ul className="divide-y divide-border border-y border-border">
             {sessions.slice(0, 8).map((s) => (
               <li key={s.id}>
                 <Link
                   to="/sessions/$sessionId"
                   params={{ sessionId: s.id }}
-                  className="flex flex-col gap-1 px-4 py-3.5 transition-colors hover:bg-muted/60 sm:flex-row sm:items-center sm:justify-between"
+                  className="flex gap-4 px-0 py-3.5 transition-colors hover:bg-muted/40"
                 >
-                  <div className="min-w-0">
+                  <time className="w-20 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">
+                    {formatDateKo(s.sessionDate)}
+                  </time>
+                  <div className="min-w-0 flex-1">
                     <p className="truncate font-medium">{s.title}</p>
                     <p className="truncate text-xs text-muted-foreground">
-                      {s.projectTitle} · {s.sessionKind} · {formatDateKo(s.sessionDate)}
+                      {s.projectTitle} · {s.sessionKind}
                       {s.headline ? ` · ${s.headline}` : ""}
                     </p>
                   </div>
@@ -165,14 +170,6 @@ function Home() {
           }}
         />
       ) : null}
-    </div>
-  );
-}
-
-function Empty({ label }: { label: string }) {
-  return (
-    <div className="rounded-xl border border-dashed border-border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
-      {label}
     </div>
   );
 }
