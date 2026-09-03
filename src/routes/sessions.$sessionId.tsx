@@ -24,7 +24,9 @@ import {
   downloadText,
   downloadWordDoc,
 } from "@/lib/minutes-export";
-import { uniqueSpeakers } from "@/lib/parse-transcript";
+import { parseTranscript, uniqueSpeakers } from "@/lib/parse-transcript";
+import { SessionAudioPlayer } from "@/components/session-audio";
+import { verifyThemeQuotes } from "@/lib/ai/evidence";
 import { runAnalyzeSession, runRewriteMinutes } from "@/lib/ai/run";
 import {
   getSession,
@@ -39,7 +41,7 @@ import {
 } from "@/lib/firebase-db";
 import { mergeThemes, SESSION_KINDS, type Fact, type ActionItem, type SessionDetail, type Theme } from "@/lib/types";
 import { useAuth } from "@/lib/auth-context";
-import { cn, formatDateKo, newId } from "@/lib/utils";
+import { cn, formatDateKo, newId, padCode } from "@/lib/utils";
 import { NativeSelect } from "@/components/native-select";
 import { Label } from "@/components/ui/label";
 import {
@@ -208,13 +210,31 @@ function SessionEditor({ session, uid }: { session: SessionDetail; uid: string }
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const evidence = useMemo(
+    () => verifyThemeQuotes(draft.themes, session.segments, draft.unresolved),
+    [draft.themes, session.segments, draft.unresolved],
+  );
+  const lowThemeCount = draft.themes.filter((t) => t.confidence === "low").length;
+  const missingSourceCount = draft.themes.filter((t) => t.sourceSegmentIds.length === 0).length;
+  const unresolvedCount = draft.unresolved.filter(Boolean).length;
+  const needsEvidenceReview =
+    lowThemeCount > 0 ||
+    missingSourceCount > 0 ||
+    unresolvedCount > 0 ||
+    evidence.droppedCount > 0;
+
   const confirmMut = useMutation({
     mutationFn: async () => {
-      await saveSessionDraft(uid, payload);
+      const checked = verifyThemeQuotes(draft.themes, session.segments, draft.unresolved);
+      await saveSessionDraft(uid, {
+        ...payload,
+        themes: checked.themes,
+        unresolved: checked.unresolved,
+      });
       await confirmSession(uid, session.id);
     },
     onSuccess: async () => {
-      toast.success("자료실에 올렸습니다.");
+      toast.success("자료실에 회의록을 올렸습니다.");
       await refresh();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -459,20 +479,41 @@ function SessionEditor({ session, uid }: { session: SessionDetail; uid: string }
                   {session.themes.length ? "다시 분석" : "분석"}
                 </Button>
                 <Button
-                  variant="outline"
+                  variant="ghost"
                   onClick={() => saveMut.mutate()}
                   disabled={saveMut.isPending}
                 >
                   초안 저장
                 </Button>
-                <Button onClick={() => confirmMut.mutate()} disabled={confirmMut.isPending}>
+                <Button
+                  className="min-w-24"
+                  onClick={() => {
+                    if (
+                      needsEvidenceReview &&
+                      !window.confirm(
+                        "확신 낮음·미해소·원문에서 확인되지 않은 인용이 있습니다. 확인되지 않은 인용은 빼고 확정합니다. 계속할까요?",
+                      )
+                    ) {
+                      return;
+                    }
+                    confirmMut.mutate();
+                  }}
+                  disabled={confirmMut.isPending}
+                >
                   확정
                 </Button>
               </>
             ) : (
-              <Button variant="outline" onClick={() => reopenMut.mutate()}>
-                확정 해제
-              </Button>
+              <>
+                <Button variant="outline" asChild>
+                  <Link to="/library/$sessionId" params={{ sessionId: session.id }}>
+                    자료실에서 보기
+                  </Link>
+                </Button>
+                <Button variant="outline" onClick={() => reopenMut.mutate()}>
+                  확정 해제
+                </Button>
+              </>
             )}
             <div className="relative">
               <Button variant="outline" onClick={() => setExportOpen((v) => !v)}>
@@ -522,6 +563,17 @@ function SessionEditor({ session, uid }: { session: SessionDetail; uid: string }
         {session.analysisError ? (
           <p className="rounded-md border border-destructive/30 bg-card px-3 py-2 text-sm text-destructive">
             {session.analysisError}
+          </p>
+        ) : null}
+        {!locked && needsEvidenceReview ? (
+          <p className="rounded-md border border-inju/40 bg-card px-3 py-2 text-sm text-ink-soft">
+            확정 전에 확인하세요.
+            {lowThemeCount > 0 ? ` 확신 낮음 ${lowThemeCount}개.` : ""}
+            {missingSourceCount > 0 ? ` 근거 없는 주제 ${missingSourceCount}개.` : ""}
+            {unresolvedCount > 0 ? ` 미해소 ${unresolvedCount}건.` : ""}
+            {evidence.droppedCount > 0
+              ? ` 원문에서 확인되지 않은 인용 ${evidence.droppedCount}개(확정 시 제외).`
+              : ""}
           </p>
         ) : null}
       </div>
@@ -577,6 +629,27 @@ function SessionEditor({ session, uid }: { session: SessionDetail; uid: string }
               근거만
             </label>
           </div>
+          {session.audio ? (
+            <SessionAudioPlayer
+              audio={session.audio}
+              canRetranscribe={!locked}
+              onRetranscribe={async (text) => {
+                const parsed = parseTranscript(text);
+                if (parsed.length === 0) throw new Error("전사 결과가 비어 있습니다.");
+                await updateSegments(uid, {
+                  id: session.id,
+                  segments: parsed.map((seg, i) => ({
+                    seq: i + 1,
+                    speaker: seg.speaker,
+                    ts: seg.ts,
+                    body: seg.body,
+                    code: padCode(i + 1),
+                  })),
+                });
+                await refresh();
+              }}
+            />
+          ) : null}
           {!locked && speakers.length > 0 ? (
             <div className="flex flex-wrap items-end gap-2 border-b border-border px-4 py-3">
               {speakers.map((name) => (
@@ -603,7 +676,9 @@ function SessionEditor({ session, uid }: { session: SessionDetail; uid: string }
           <ol className="p-2 lg:max-h-[70vh] lg:overflow-auto">
             {visibleSegments.length === 0 ? (
               <li className="px-3 py-8 text-center text-sm text-muted-foreground">
-                이 주제에 연결된 구간이 없습니다.
+                {session.segments.length === 0 && session.audio
+                  ? "원본은 보관되어 있습니다. 위에서 다시 전사하세요."
+                  : "이 주제에 연결된 구간이 없습니다."}
               </li>
             ) : (
               visibleSegments.map((seg) => {
@@ -1103,4 +1178,3 @@ function SessionMetaDialog({
     </Dialog>
   );
 }
-
