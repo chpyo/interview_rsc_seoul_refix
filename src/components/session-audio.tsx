@@ -64,7 +64,7 @@ export function SessionAudioPlayer({
             variant="outline"
             disabled={retryMut.isPending}
             onClick={() => {
-              if (window.confirm("원본을 다시 전사할까요? 지금 원문 구간이 바뀍니다.")) {
+              if (window.confirm("원본을 다시 전사할까요? 지금 원문 구간이 바뀝니다.")) {
                 retryMut.mutate();
               }
             }}
