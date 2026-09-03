@@ -30,12 +30,12 @@ export function TagChart({ data }: { data: Array<{ label: string; count: number 
             width={80}
           />
           <Tooltip 
-            cursor={{ fill: 'rgba(47, 79, 69, 0.05)' }} 
+            cursor={{ fill: "rgba(36, 63, 56, 0.05)" }} 
             contentStyle={{ borderRadius: '8px', border: '1px solid #ddd6c8', backgroundColor: '#fffcf7', fontSize: '13px' }}
           />
           <Bar dataKey="count" radius={[0, 4, 4, 0]} barSize={20}>
             {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill="#2f4f45" />
+              <Cell key={`cell-${index}`} fill="#243f38" />
             ))}
           </Bar>
         </BarChart>

@@ -11,9 +11,8 @@ import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import { AuthProvider as FirebaseAuthProvider } from "@/lib/auth-context";
 import { AuthProvider } from "@/lib/auth/provider";
 import { queryClient } from "@/lib/query-client";
+import { APP_DESCRIPTION, APP_NAME, APP_THEME_COLOR } from "@/lib/brand";
 import appCss from "../styles.css?url";
-
-const APP_NAME = "현장베이스";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -23,9 +22,9 @@ export const Route = createRootRoute({
       { title: APP_NAME },
       {
         name: "description",
-        content: "기업 현장조사 녹취를 주제 구조와 회의록으로 정리하고 근거로 쌓습니다.",
+        content: APP_DESCRIPTION,
       },
-      { name: "theme-color", content: "#2f4f45" },
+      { name: "theme-color", content: APP_THEME_COLOR },
     ],
     links: [
       { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" },
