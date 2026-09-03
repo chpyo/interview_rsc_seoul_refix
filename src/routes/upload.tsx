@@ -12,6 +12,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { extractOfficeText } from "@/lib/office-text";
 import { runTranscribeAudio } from "@/lib/ai/run";
 import {
+  formatAudioBytes,
+  formatDurationSec,
+  uploadUserAudio,
+} from "@/lib/audio";
+import {
   parseTranscript,
   remapSpeakers,
   serializeSegments,
@@ -19,7 +24,7 @@ import {
 } from "@/lib/parse-transcript";
 import { getStoredResearcher, setStoredResearcher } from "@/lib/researcher";
 import { listProjects, createSession } from "@/lib/firebase-db";
-import { SESSION_KINDS } from "@/lib/types";
+import { SESSION_KINDS, type SessionAudio } from "@/lib/types";
 import { useAuth } from "@/lib/auth-context";
 import { padCode } from "@/lib/utils";
 
@@ -60,7 +65,11 @@ function UploadPage() {
   const [recordingTime, setRecordingTime] = useState(0);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const timerRef = useRef<number | null>(null);
+  const durationRef = useRef(0);
   const audioChunksRef = useRef<Blob[]>([]);
+  const pendingAudioRef = useRef<{ blob: Blob; filename: string; durationSec: number | null } | null>(
+    null,
+  );
   
   // Waveform Refs
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -84,23 +93,27 @@ function UploadPage() {
   }, []);
 
   const [isTranscribing, setIsTranscribing] = useState(false);
+  const [audio, setAudio] = useState<SessionAudio | null>(null);
+  const [audioPhase, setAudioPhase] = useState<"idle" | "uploading" | "transcribing" | "ready" | "failed">(
+    "idle",
+  );
+  const [uploadPct, setUploadPct] = useState(0);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const pending = pendingAudioRef.current;
+    if (!pending) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(pending.blob);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [audio, audioPhase]);
 
   const parsed = useMemo(() => (text ? parseTranscript(text) : []), [text]);
   const speakers = useMemo(() => uniqueSpeakers(parsed), [parsed]);
   const remapped = useMemo(() => remapSpeakers(parsed, speakerMap), [parsed, speakerMap]);
-
-  async function fileToBase64(file: Blob | File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        const result = reader.result as string;
-        const base64 = result.split(",")[1];
-        resolve(base64 ?? "");
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
-  }
 
   const startRecording = async () => {
     try {
@@ -139,15 +152,20 @@ function UploadPage() {
           audioContextRef.current.close().catch(console.error);
         }
         
-        await handleAudioData(audioBlob, "녹음본.webm");
+        await handleAudioData(audioBlob, "녹음본.webm", durationRef.current);
       };
 
       mediaRecorder.start();
       setIsRecording(true);
       isRecordingRef.current = true;
       setRecordingTime(0);
+      durationRef.current = 0;
       timerRef.current = window.setInterval(() => {
-        setRecordingTime((prev) => prev + 1);
+        setRecordingTime((prev) => {
+          const next = prev + 1;
+          durationRef.current = next;
+          return next;
+        });
       }, 1000);
 
       // Start drawing waveform
@@ -207,27 +225,74 @@ function UploadPage() {
     return `${m}:${s}`;
   };
 
-  async function handleAudioData(file: Blob | File, defaultName: string) {
+  async function readDuration(blob: Blob): Promise<number | null> {
+    try {
+      const url = URL.createObjectURL(blob);
+      const duration = await new Promise<number | null>((resolve) => {
+        const el = document.createElement("audio");
+        el.preload = "metadata";
+        el.onloadedmetadata = () => resolve(Number.isFinite(el.duration) ? el.duration : null);
+        el.onerror = () => resolve(null);
+        el.src = url;
+      });
+      URL.revokeObjectURL(url);
+      return duration;
+    } catch {
+      return null;
+    }
+  }
+
+  async function transcribeStored(stored: SessionAudio, blob: Blob) {
+    setAudioPhase("transcribing");
     setIsTranscribing(true);
     try {
-      const base64Data = await fileToBase64(file);
-      const res = await runTranscribeAudio({ base64Data, mimeType: file.type });
+      const res = await runTranscribeAudio({
+        blob,
+        mimeType: stored.mimeType || blob.type,
+        storagePath: stored.storagePath,
+      });
       if (!res.ok) {
+        setAudioPhase("failed");
         toast.error(res.error);
-      } else {
-        setText(res.text);
-        const name = (file as File).name || defaultName;
-        setFilename(name);
-        setSpeakerMap({});
-        if (!title) {
-          setTitle(name.replace(/\.(mp3|wav|m4a|aac|webm)$/i, ""));
-        }
-        toast.success("음성 전사가 완료되었습니다.");
+        return;
       }
+      setText(res.text);
+      setSpeakerMap({});
+      setAudioPhase("ready");
+      toast.success("음성 전사가 완료되었습니다.");
     } catch (err) {
+      setAudioPhase("failed");
       toast.error(err instanceof Error ? err.message : "음성을 처리하지 못했습니다.");
     } finally {
       setIsTranscribing(false);
+    }
+  }
+
+  async function handleAudioData(file: Blob | File, defaultName: string, durationSec?: number | null) {
+    if (!uid) {
+      toast.error("로그인이 필요합니다.");
+      return;
+    }
+    const blob = file.type ? file : new Blob([await file.arrayBuffer()], { type: "audio/webm" });
+    const name = (file as File).name || defaultName;
+    const duration = durationSec ?? (await readDuration(blob));
+    pendingAudioRef.current = { blob, filename: name, durationSec: duration ?? null };
+    setFilename(name);
+    setSpeakerMap({});
+    if (!title) setTitle(name.replace(/\.(mp3|wav|m4a|aac|webm)$/i, ""));
+    setAudioPhase("uploading");
+    setUploadPct(0);
+    try {
+      const stored = await uploadUserAudio(uid, blob, name, {
+        durationSec: duration ?? null,
+        onProgress: setUploadPct,
+      });
+      setAudio(stored);
+      toast.success("원본을 보관했습니다. 전사를 시작합니다.");
+      await transcribeStored(stored, blob);
+    } catch (err) {
+      setAudioPhase("failed");
+      toast.error(err instanceof Error ? err.message : "원본 보관에 실패했습니다.");
     }
   }
 
@@ -264,8 +329,9 @@ function UploadPage() {
         sizeLabel,
         district,
         researcher,
-        filename: filename || "붙여넣기.txt",
+        filename: filename || audio?.filename || "붙여넣기.txt",
         originalText: serializeSegments(remapped),
+        audio,
         segments: remapped.map((seg, i) => ({
           seq: i + 1,
           speaker: seg.speaker,
@@ -276,24 +342,30 @@ function UploadPage() {
       }),
     onSuccess: (res) => {
       setStoredResearcher(researcher);
-      toast.success(`구간 ${res.segmentCount}개를 읽었습니다.`);
+      toast.success(
+        res.segmentCount > 0 ? `구간 ${res.segmentCount}개를 읽었습니다.` : "원본을 저장했습니다.",
+      );
       void navigate({ to: "/sessions/$sessionId", params: { sessionId: res.id } });
     },
     onError: (err: Error) => toast.error(err.message),
   });
 
-  const canSubmit = projectId && title.trim() && remapped.length > 0;
+  const canSubmit =
+    !!projectId &&
+    !!title.trim() &&
+    audioPhase !== "uploading" &&
+    (remapped.length > 0 || !!audio);
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-6">
       <div>
-        <h1 className="font-serif text-3xl font-semibold tracking-tight">녹취 올리기</h1>
+        <h1 className="font-serif text-4xl font-semibold tracking-tight">녹취 올리기</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          화자와 구간이 나뉜 텍스트, 워드, 한글(HWPX)을 받습니다. 음성 파일(.mp3, .wav, .m4a)을 올리면 AI가 직접 전사합니다.
+          화자와 구간이 나뉜 텍스트, 워드, 한글(HWPX)을 받습니다. 음성은 원본을 먼저 보관한 뒤 Gemini Files API로 전사합니다.
         </p>
       </div>
 
-      <Card className="rounded-lg">
+      <Card>
         <CardContent className="flex flex-col gap-4 p-5">
           <label
             onDragOver={(e) => {
@@ -313,7 +385,13 @@ function UploadPage() {
           >
             {isTranscribing ? <LoaderCircle className="size-5 text-primary animate-spin" /> : <Upload className="size-5 text-primary" />}
             <span className="text-sm font-medium">
-              {isTranscribing ? "음성을 텍스트로 변환하는 중..." : reading ? "파일을 읽는 중..." : "파일을 놓거나 선택"}
+              {audioPhase === "uploading"
+                ? `원본 보관 중 ${uploadPct}%`
+                : isTranscribing
+                  ? "원본은 보관됐습니다. 전사하는 중..."
+                  : reading
+                    ? "파일을 읽는 중..."
+                    : "파일을 놓거나 선택"}
             </span>
             <span className="text-xs text-muted-foreground">
               .txt .docx .hwpx 또는 음성 파일 (.mp3, .wav, .m4a)
@@ -328,6 +406,44 @@ function UploadPage() {
               }}
             />
           </label>
+          {audio || audioPhase !== "idle" ? (
+            <div className="rounded-lg border border-border bg-card px-4 py-3">
+              <p className="text-sm font-medium">
+                {audioPhase === "uploading"
+                  ? `원본 보관 중 ${uploadPct}%`
+                  : audioPhase === "transcribing"
+                    ? "원본 보관됨 · 전사 중"
+                    : audioPhase === "failed"
+                      ? "원본 보관됨 · 전사 실패"
+                      : audioPhase === "ready"
+                        ? "원본 보관됨 · 전사 완료"
+                        : "원본 대기"}
+              </p>
+              {audio ? (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {audio.filename}
+                  {formatDurationSec(audio.durationSec) ? ` · ${formatDurationSec(audio.durationSec)}` : ""}
+                  {audio.sizeBytes ? ` · ${formatAudioBytes(audio.sizeBytes)}` : ""}
+                </p>
+              ) : null}
+              {previewUrl ? <audio className="mt-2 w-full" controls src={previewUrl} preload="metadata" /> : null}
+              {audioPhase === "failed" && audio && pendingAudioRef.current ? (
+                <Button
+                  className="mt-3"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => void transcribeStored(audio, pendingAudioRef.current!.blob)}
+                >
+                  다시 전사
+                </Button>
+              ) : null}
+              {audio && remapped.length === 0 ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  전사가 없어도 원본을 먼저 저장할 수 있습니다. 세션에서 다시 전사하세요.
+                </p>
+              ) : null}
+            </div>
+          ) : null}
           <div className="flex flex-col items-center gap-3 rounded-lg border border-border bg-muted/20 p-6">
             <Label className="text-base font-semibold">앱에서 직접 녹음하기</Label>
             <p className="text-sm text-muted-foreground text-center">
@@ -346,7 +462,7 @@ function UploadPage() {
                 </div>
                 <Button variant="destructive" onClick={stopRecording} className="gap-2">
                   <Square className="size-4" fill="currentColor" />
-                  녹음 중지 및 분석
+                  녹음 중지 및 보관
                 </Button>
               </div>
             ) : (
@@ -532,10 +648,18 @@ function UploadPage() {
           <p className="text-sm text-destructive">
             구간을 읽지 못했습니다. 화자 표기를 확인해 주세요.
           </p>
+        ) : audio ? (
+          <p className="text-sm text-muted-foreground">
+            전사 전이라도 원본을 작업대로 보낼 수 있습니다.
+          </p>
         ) : null}
 
         <Button type="submit" disabled={!canSubmit || mutation.isPending} className="self-start">
-          {mutation.isPending ? "저장 중" : "작업대로 보내기"}
+          {mutation.isPending
+            ? "저장 중"
+            : remapped.length > 0
+              ? "작업대로 보내기"
+              : "원본만 먼저 저장"}
         </Button>
       </form>
     </div>
