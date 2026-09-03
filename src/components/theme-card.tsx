@@ -59,7 +59,14 @@ export function ThemeCard({
             <h3 className="font-serif text-base font-semibold tracking-tight">{theme.title}</h3>
           )}
         </button>
-        <Badge variant="outline">{CONFIDENCE_LABEL[theme.confidence]}</Badge>
+        <Badge
+          variant="outline"
+          className={
+            theme.confidence === "low" ? "border-inju/40 text-inju" : undefined
+          }
+        >
+          {CONFIDENCE_LABEL[theme.confidence]}
+        </Badge>
         {!locked && !editing ? (
           <Button size="icon" variant="ghost" onClick={onStartEdit} aria-label="주제 편집">
             <Pencil className="size-4" />
@@ -110,14 +117,14 @@ export function ThemeCard({
           <button
             key={code}
             type="button"
-            className="h-8 rounded-full border border-border bg-card px-2.5 font-mono text-xs"
+            className="h-8 rounded-sm border border-inju/30 bg-card px-2.5 font-mono text-xs text-inju"
             onClick={() => onJump(code)}
           >
             {code}
           </button>
         ))}
         {theme.sourceSegmentIds.length === 0 ? (
-          <span className="text-xs text-destructive">근거 구간 없음</span>
+          <span className="text-xs text-inju">근거 구간 없음</span>
         ) : null}
       </div>
 
@@ -149,7 +156,7 @@ export function ThemeCard({
           ) : (
             <blockquote
               key={`${q.segmentId}-${i}`}
-              className="border-l-2 border-primary/40 pl-3 font-serif text-sm leading-relaxed"
+              className="border-l-2 border-inju/50 pl-3 font-serif text-sm leading-relaxed"
             >
               {q.text}
               <span className="mt-1 block font-sans font-mono text-xs text-muted-foreground">

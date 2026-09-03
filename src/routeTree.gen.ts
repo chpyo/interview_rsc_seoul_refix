@@ -12,6 +12,8 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as LibraryRouteImport } from './routes/library'
 import { Route as UploadRouteImport } from './routes/upload'
+import { Route as LibraryIndexRouteImport } from './routes/library.index'
+import { Route as LibrarySessionIdRouteImport } from './routes/library.$sessionId'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projectId'
 import { Route as SessionsSessionIdRouteImport } from './routes/sessions.$sessionId'
 
@@ -30,6 +32,16 @@ const UploadRoute = UploadRouteImport.update({
   path: '/upload',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LibraryIndexRoute = LibraryIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => LibraryRoute,
+} as any)
+const LibrarySessionIdRoute = LibrarySessionIdRouteImport.update({
+  id: '/$sessionId',
+  path: '/$sessionId',
+  getParentRoute: () => LibraryRoute,
+} as any)
 const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
   id: '/projects/$projectId',
   path: '/projects/$projectId',
@@ -43,25 +55,30 @@ const SessionsSessionIdRoute = SessionsSessionIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/library': typeof LibraryRoute
+  '/library': typeof LibraryRouteWithChildren
   '/upload': typeof UploadRoute
+  '/library/$sessionId': typeof LibrarySessionIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/library/': typeof LibraryIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/library': typeof LibraryRoute
   '/upload': typeof UploadRoute
+  '/library/$sessionId': typeof LibrarySessionIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/library': typeof LibraryIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/library': typeof LibraryRoute
+  '/library': typeof LibraryRouteWithChildren
   '/upload': typeof UploadRoute
+  '/library/$sessionId': typeof LibrarySessionIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/sessions/$sessionId': typeof SessionsSessionIdRoute
+  '/library/': typeof LibraryIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -69,27 +86,32 @@ export interface FileRouteTypes {
     | '/'
     | '/library'
     | '/upload'
+    | '/library/$sessionId'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
+    | '/library/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/library'
     | '/upload'
+    | '/library/$sessionId'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
+    | '/library'
   id:
     | '__root__'
     | '/'
     | '/library'
     | '/upload'
+    | '/library/$sessionId'
     | '/projects/$projectId'
     | '/sessions/$sessionId'
+    | '/library/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  LibraryRoute: typeof LibraryRoute
+  LibraryRoute: typeof LibraryRouteWithChildren
   UploadRoute: typeof UploadRoute
   ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
   SessionsSessionIdRoute: typeof SessionsSessionIdRoute
@@ -118,6 +140,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof UploadRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/library/': {
+      id: '/library/'
+      path: '/'
+      fullPath: '/library/'
+      preLoaderRoute: typeof LibraryIndexRouteImport
+      parentRoute: typeof LibraryRoute
+    }
+    '/library/$sessionId': {
+      id: '/library/$sessionId'
+      path: '/$sessionId'
+      fullPath: '/library/$sessionId'
+      preLoaderRoute: typeof LibrarySessionIdRouteImport
+      parentRoute: typeof LibraryRoute
+    }
     '/projects/$projectId': {
       id: '/projects/$projectId'
       path: '/projects/$projectId'
@@ -135,9 +171,22 @@ declare module '@tanstack/react-router' {
   }
 }
 
+interface LibraryRouteChildren {
+  LibrarySessionIdRoute: typeof LibrarySessionIdRoute
+  LibraryIndexRoute: typeof LibraryIndexRoute
+}
+
+const LibraryRouteChildren: LibraryRouteChildren = {
+  LibrarySessionIdRoute: LibrarySessionIdRoute,
+  LibraryIndexRoute: LibraryIndexRoute,
+}
+
+const LibraryRouteWithChildren =
+  LibraryRoute._addFileChildren(LibraryRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  LibraryRoute: LibraryRoute,
+  LibraryRoute: LibraryRouteWithChildren,
   UploadRoute: UploadRoute,
   ProjectsProjectIdRoute: ProjectsProjectIdRoute,
   SessionsSessionIdRoute: SessionsSessionIdRoute,
