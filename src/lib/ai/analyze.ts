@@ -1,4 +1,6 @@
+import { verifyThemeQuotes } from "@/lib/ai/evidence";
 import { geminiJson } from "@/lib/ai/gemini";
+import { ANALYSIS_JSON_SCHEMA, MINUTES_JSON_SCHEMA } from "@/lib/ai/schema";
 import type { ParsedSegment } from "@/lib/parse-transcript";
 import type { Confidence } from "@/lib/types";
 
@@ -29,38 +31,7 @@ const SYSTEM = `당신은 서울지역 인적자원개발위원회의 조사 연
 4. 안 나온 항목을 "해당 없음" 섹션으로 만들지 마십시오.
 5. 구어는 보고서체로 다듬되, quotes.text는 원문을 유지하십시오.
 6. 애매하면 confidence를 low로 두고 unresolved에 이유를 적으십시오.
-7. 응답은 JSON 객체만 출력하십시오.`;
-
-const SCHEMA_HINT = `{
-  "headline": "한 줄 핵심",
-  "themes": [
-    {
-      "title": "이번 대화의 주제 제목",
-      "summary": "2~5문장 요지",
-      "bullets": ["핵심 한 줄"],
-      "source_segments": ["S001"],
-      "quotes": [{ "text": "원문 한두 문장", "segment_id": "S001" }],
-      "confidence": "high"
-    }
-  ],
-  "facts": [{ "label": "종사자 수", "value": "42명", "segment_id": "S002" }],
-  "tags": ["재직자훈련"],
-  "minutes": {
-    "overview": "일시·대상·목적을 포함한 개요 한 문단",
-    "body": "마크다운. ## 주제제목 아래 요지. 나온 주제만.",
-    "followups": ["후속 확인 사항"]
-  },
-  "unresolved": ["결론 없이 언급만 된 사항"],
-  "actionItems": [
-    {
-      "assignee": "김팀장 (미정이면 빈 문자열)",
-      "deadline": "다음 주 금요일 (미정이면 빈 문자열)",
-      "task": "시장조사 보고서 작성",
-      "segmentId": "S003"
-    }
-  ]
-}
-confidence는 high, medium, low 중 하나.`;
+7. quotes.text는 해당 구간 원문을 그대로 복사하십시오. 말을 바꾸거나 요약하지 마십시오.`;
 
 function formatSegments(segments: Array<ParsedSegment & { code: string }>): string {
   return segments
@@ -151,6 +122,14 @@ function normalizeAnalysis(raw: unknown, validCodes: Set<string>): AnalysisResul
   };
 }
 
+function applyEvidence(
+  result: AnalysisResult,
+  segments: Array<{ code: string; body: string }>,
+): AnalysisResult {
+  const checked = verifyThemeQuotes(result.themes, segments, result.unresolved);
+  return { ...result, themes: checked.themes, unresolved: checked.unresolved };
+}
+
 const MAX_CHUNK_CHARS = 14000;
 
 function chunkBySize(segments: Array<ParsedSegment & { code: string }>) {
@@ -199,25 +178,28 @@ export async function analyzeTranscript(input: {
   if (chunks.length === 1) {
     const raw = await geminiJson({
       system: SYSTEM,
-      user: `다음 녹취를 분석하십시오.\n\n${metaBlock}\n\n출력 스키마:\n${SCHEMA_HINT}\n\n녹취:\n${formatSegments(chunks[0] ?? [])}`,
+      schema: ANALYSIS_JSON_SCHEMA,
+      user: `다음 녹취를 분석하십시오. quotes.text는 구간 원문 그대로입니다.\n\n${metaBlock}\n\n녹취:\n${formatSegments(chunks[0] ?? [])}`,
     });
-    return normalizeAnalysis(raw, validCodes);
+    return applyEvidence(normalizeAnalysis(raw, validCodes), input.segments);
   }
 
   const partials: unknown[] = [];
   for (const [i, chunk] of chunks.entries()) {
     const raw = await geminiJson({
       system: SYSTEM,
-      user: `긴 녹취의 ${i + 1}/${chunks.length} 부분입니다. 이 구간의 주제·사실·인용만 JSON으로 추출하십시오. minutes는 비워 두어도 됩니다.\n\n${metaBlock}\n\n출력 스키마:\n${SCHEMA_HINT}\n\n녹취:\n${formatSegments(chunk)}`,
+      schema: ANALYSIS_JSON_SCHEMA,
+      user: `긴 녹취의 ${i + 1}/${chunks.length} 부분입니다. 이 구간의 주제·사실·인용만 추출하십시오. minutes는 비워 두어도 됩니다. quotes.text는 구간 원문 그대로입니다.\n\n${metaBlock}\n\n녹취:\n${formatSegments(chunk)}`,
     });
     partials.push(raw);
   }
 
   const merged = await geminiJson({
     system: SYSTEM,
-    user: `아래는 같은 인터뷰를 나눈 부분 분석입니다. 주제를 중복 없이 병합하고 회의록 초안을 작성하십시오. 원문에 없는 내용을 보태지 마십시오.\n\n${metaBlock}\n\n출력 스키마:\n${SCHEMA_HINT}\n\n부분 분석 JSON:\n${JSON.stringify(partials)}`,
+    schema: ANALYSIS_JSON_SCHEMA,
+    user: `아래는 같은 인터뷰를 나눈 부분 분석입니다. 주제를 중복 없이 병합하고 회의록 초안을 작성하십시오. 원문에 없는 내용을 보태지 마십시오. 인용 원문을 바꾸지 마십시오.\n\n${metaBlock}\n\n부분 분석 JSON:\n${JSON.stringify(partials)}`,
   });
-  return normalizeAnalysis(merged, validCodes);
+  return applyEvidence(normalizeAnalysis(merged, validCodes), input.segments);
 }
 
 export async function rewriteMinutesFromThemes(input: {
@@ -233,18 +215,15 @@ export async function rewriteMinutesFromThemes(input: {
 }): Promise<AnalysisResult["minutes"]> {
   const raw = await geminiJson({
     system: SYSTEM,
-    user: `검수된 주제 카드를 바탕으로 회의록 초안만 JSON으로 쓰십시오. 키는 minutes 하나만 있어도 됩니다. overview, body, followups를 채우십시오. body는 ## 주제제목 구조. 없는 사실을 만들지 마십시오.\n\n프로젝트: ${input.meta.projectTitle}\n대상: ${input.meta.title}\n유형: ${input.meta.sessionKind}\n일자: ${input.meta.sessionDate ?? "미기재"}\n\nthemes: ${JSON.stringify(input.themes)}\nfacts: ${JSON.stringify(input.facts)}\nunresolved: ${JSON.stringify(input.unresolved)}`,
+    schema: MINUTES_JSON_SCHEMA,
+    user: `검수된 주제 카드를 바탕으로 회의록 초안만 쓰십시오. overview, body, followups를 채우십시오. body는 ## 주제제목 구조. 없는 사실을 만들지 마십시오.\n\n프로젝트: ${input.meta.projectTitle}\n대상: ${input.meta.title}\n유형: ${input.meta.sessionKind}\n일자: ${input.meta.sessionDate ?? "미기재"}\n\nthemes: ${JSON.stringify(input.themes)}\nfacts: ${JSON.stringify(input.facts)}\nunresolved: ${JSON.stringify(input.unresolved)}`,
   });
-  const normalized = normalizeAnalysis(raw, new Set());
-  if (normalized.minutes.overview || normalized.minutes.body) {
-    return normalized.minutes;
-  }
   const obj = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const nested =
+    obj.minutes && typeof obj.minutes === "object" ? (obj.minutes as Record<string, unknown>) : obj;
   return {
-    overview: typeof obj.overview === "string" ? obj.overview : "",
-    body: typeof obj.body === "string" ? obj.body : "",
-    followups: Array.isArray(obj.followups)
-      ? obj.followups.filter((x): x is string => typeof x === "string")
-      : [],
+    overview: str(nested.overview),
+    body: str(nested.body),
+    followups: asArr(nested.followups).map((x) => str(x)).filter(Boolean),
   };
 }
