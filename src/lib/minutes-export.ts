@@ -1,12 +1,12 @@
-import type { Fact, LibraryHit, SessionDetail, Theme } from "@/lib/types";
+import type { Fact, SessionDetail, Theme } from "@/lib/types";
 import { formatDateKo } from "@/lib/utils";
 
 function escapeHtml(value: string): string {
   return value
-    .replace(/&/g, "\u0026amp;")
-    .replace(/</g, "\u0026lt;")
-    .replace(/>/g, "\u0026gt;")
-    .replace(/"/g, "\u0026quot;");
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function mdLiteToHtml(body: string): string {
@@ -52,7 +52,7 @@ const PRINT_CSS = `
   h2 { font-size: 16px; margin: 28px 0 10px; }
   p, li { font-size: 14px; }
   .meta { font-family: "IBM Plex Sans KR", sans-serif; font-size: 12px; color: #5c605d; margin-bottom: 24px; }
-  blockquote { margin: 8px 0 16px; padding: 8px 0 8px 14px; border-left: 3px solid #2f4f45; }
+  blockquote { margin: 8px 0 16px; padding: 8px 0 8px 14px; border-left: 3px solid #8c3b2a; }
   .src { font-family: ui-monospace, monospace; font-size: 11px; color: #6a6e6b; }
   ul { padding-left: 18px; }
   @media print { body { padding: 12mm; } }
@@ -161,7 +161,7 @@ export function buildMinutesHtml(input: {
           .join("")}</ul>`;
 
   const body = `
-  <p class="meta">서울지역 인적자원개발위원회 · 현장베이스</p>
+  <p class="meta">서울지역 인적자원개발위원회 · 현장록</p>
   <h1>${escapeHtml(s.title)} 회의록</h1>
   <p class="meta">
     ${escapeHtml(s.projectTitle)} · ${escapeHtml(s.sessionKind)} · ${escapeHtml(formatDateKo(s.sessionDate))}<br/>
@@ -184,41 +184,6 @@ export function buildMinutesHtml(input: {
   <p>${escapeHtml(input.tags.join(", ") || "(없음)")}</p>
   `;
   return wrapHtml(`${s.title} 회의록`, body);
-}
-
-export function buildQuotePackHtml(input: {
-  query: string;
-  tag: string;
-  hits: LibraryHit[];
-}): string {
-  const title = "현장베이스 인용집";
-  const grouped = new Map<string, LibraryHit[]>();
-  for (const hit of input.hits) {
-    const list = grouped.get(hit.sessionId) ?? [];
-    list.push(hit);
-    grouped.set(hit.sessionId, list);
-  }
-  const sections = [...grouped.values()].map((hits) => {
-    const first = hits[0]!;
-    const items = hits
-      .map((h) => {
-        const kind = h.kind === "excerpt" ? "인용" : h.kind === "theme" ? "주제" : "사실";
-        return `<h2>${escapeHtml(kind)} · ${escapeHtml(h.title)}</h2>
-        <blockquote><p>${escapeHtml(h.body)}</p>
-        <p class="src">${h.segmentCode ? escapeHtml(h.segmentCode) : ""}</p></blockquote>`;
-      })
-      .join("");
-    return `<p class="meta">${escapeHtml(first.projectTitle)} · ${escapeHtml(first.sessionTitle)} · ${escapeHtml(formatDateKo(first.sessionDate))}</p>${items}`;
-  });
-  const body = `
-    <p class="meta">서울지역 인적자원개발위원회 · 현장베이스</p>
-    <h1>${title}</h1>
-    <p class="meta">검색어: ${escapeHtml(input.query || "(전체)")}${
-      input.tag ? ` · 태그 ${escapeHtml(input.tag)}` : ""
-    } · ${input.hits.length}건</p>
-    ${sections.join("") || "<p>항목이 없습니다.</p>"}
-  `;
-  return wrapHtml(title, body);
 }
 
 export function downloadText(filename: string, content: string, mime = "text/plain;charset=utf-8") {

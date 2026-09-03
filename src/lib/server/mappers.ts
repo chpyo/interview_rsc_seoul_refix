@@ -1,17 +1,18 @@
 import type {
+  ActionItem,
   CrossData,
   CrossSummary,
   Fact,
-  LibraryHit,
   Project,
   Segment,
+  SessionAudio,
   SessionDetail,
   SessionStatus,
   SessionSummary,
   Theme,
 } from "@/lib/types";
 import { isConfidence, isStatus } from "@/lib/types";
-import { asStringArray } from "@/lib/utils";
+import { asStringArray, newId } from "@/lib/utils";
 
 export type ProjectRow = {
   id: string;
@@ -41,11 +42,17 @@ export type SessionRow = {
   status: string;
   original_filename: string;
   original_text?: string;
+  audio_storage_path?: string;
+  audio_mime_type?: string;
+  audio_filename?: string;
+  audio_size_bytes?: number;
+  audio_duration_sec?: number | null;
   headline: string;
   minutes_overview?: string;
   minutes_body?: string;
   minutes_followups?: unknown;
   unresolved?: unknown;
+  action_items?: unknown;
   analysis_error?: string;
   created_at: string;
   updated_at: string;
@@ -136,6 +143,18 @@ export function mapStatus(value: string): SessionStatus {
   return isStatus(value) ? value : "uploaded";
 }
 
+function mapAudio(row: SessionRow): SessionAudio | null {
+  const storagePath = row.audio_storage_path?.trim() ?? "";
+  if (!storagePath) return null;
+  return {
+    storagePath,
+    mimeType: row.audio_mime_type ?? "audio/webm",
+    filename: row.audio_filename ?? "recording.webm",
+    sizeBytes: Number(row.audio_size_bytes ?? 0),
+    durationSec: row.audio_duration_sec ?? null,
+  };
+}
+
 export function mapSessionSummary(row: SessionRow): SessionSummary {
   return {
     id: row.id,
@@ -150,7 +169,9 @@ export function mapSessionSummary(row: SessionRow): SessionSummary {
     researcher: row.researcher ?? "",
     status: mapStatus(row.status),
     headline: row.headline,
+    minutesOverview: row.minutes_overview ?? "",
     originalFilename: row.original_filename,
+    audio: mapAudio(row),
     tagLabels: asStringArray(row.tag_labels),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -194,6 +215,20 @@ export function mapFacts(rows: FactRow[]): Fact[] {
   }));
 }
 
+function mapActionItems(value: unknown): ActionItem[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => {
+    const rec = item && typeof item === "object" ? (item as Record<string, unknown>) : {};
+    return {
+      id: typeof rec.id === "string" && rec.id ? rec.id : newId("act"),
+      assignee: typeof rec.assignee === "string" ? rec.assignee : "",
+      deadline: typeof rec.deadline === "string" ? rec.deadline : "",
+      task: typeof rec.task === "string" ? rec.task : "",
+      segmentCode: String(rec.segment_code ?? rec.segmentCode ?? ""),
+    };
+  });
+}
+
 export function mapSessionDetail(
   row: SessionRow,
   segments: SegmentRow[],
@@ -209,6 +244,7 @@ export function mapSessionDetail(
     minutesBody: row.minutes_body ?? "",
     minutesFollowups: asStringArray(row.minutes_followups),
     unresolved: asStringArray(row.unresolved),
+    actionItems: mapActionItems(row.action_items),
     analysisError: row.analysis_error ?? "",
     segments: segments
       .slice()
@@ -230,5 +266,3 @@ export function emptyCross(project: Project): CrossData {
     crossSummaryAt: null,
   };
 }
-
-export type { LibraryHit };
