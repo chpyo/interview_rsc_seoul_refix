@@ -1,13 +1,16 @@
 import { analyzeTranscript, rewriteMinutesFromThemes } from "@/lib/ai/analyze";
-import { chatWithProjectData } from "@/lib/ai/chat";
+import { chatWithConfirmedCases } from "@/lib/ai/chat";
 import { synthesizeProject } from "@/lib/ai/cross";
-import { geminiAudio, isGeminiKeyError } from "@/lib/ai/gemini";
+import { geminiEmbed } from "@/lib/ai/embed";
+import { geminiTranscribeMedia, isGeminiKeyError } from "@/lib/ai/gemini";
+import { embedText } from "@/lib/server/embed";
 import {
   analyzeSession,
   askProjectAssistant,
   generateCrossSummary,
   rewriteMinutes,
 } from "@/lib/server/sessions";
+import type { ChatGroundedReply, RelatedCase } from "@/lib/types";
 import { transcribeAudio } from "@/lib/server/stt";
 import type { CrossSummary } from "@/lib/types";
 
@@ -81,36 +84,75 @@ export async function runCrossSummary(payload: Parameters<typeof synthesizeProje
   }
 }
 
-export async function runProjectAssistant(payload: Parameters<typeof chatWithProjectData>[0]) {
+export async function runEmbedText(
+  text: string,
+  taskType: "RETRIEVAL_DOCUMENT" | "RETRIEVAL_QUERY",
+): Promise<number[] | null> {
+  try {
+    const res = await embedText({ data: { text, taskType } });
+    if (res.embedding) return res.embedding;
+  } catch (err) {
+    if (!shouldClientFallback(err)) return null;
+  }
+  try {
+    return await geminiEmbed(text, taskType);
+  } catch {
+    return null;
+  }
+}
+
+export async function runProjectAssistant(payload: Parameters<typeof chatWithConfirmedCases>[0]): Promise<
+  { ok: true; answer: string; relatedCases: RelatedCase[] } | { ok: false; error: string; answer: string; relatedCases: RelatedCase[] }
+> {
+  const empty = { answer: "", relatedCases: [] as RelatedCase[] };
   try {
     const res = await askProjectAssistant({ data: payload });
     if (res.ok) return res;
     if (!shouldClientFallback(res.error)) return res;
   } catch (err) {
     if (!shouldClientFallback(err)) {
-      return { ok: false as const, error: failMessage(err, "답변 생성 실패"), answer: "" };
+      return { ok: false as const, error: failMessage(err, "답변 생성 실패"), ...empty };
     }
   }
   try {
-    const answer = await chatWithProjectData(payload);
-    return { ok: true as const, answer };
+    const reply: ChatGroundedReply = await chatWithConfirmedCases(payload);
+    return { ok: true as const, ...reply };
   } catch (err) {
-    return { ok: false as const, error: failMessage(err, "답변 생성 실패"), answer: "" };
+    return { ok: false as const, error: failMessage(err, "답변 생성 실패"), ...empty };
   }
 }
 
-export async function runTranscribeAudio(payload: { base64Data: string; mimeType: string }) {
-  try {
-    const res = await transcribeAudio({ data: payload });
-    if (res.ok) return res;
-    if (!shouldClientFallback(res.error)) return res;
-  } catch (err) {
-    if (!shouldClientFallback(err)) {
-      return { ok: false as const, error: failMessage(err, "음성 인식에 실패했습니다.") };
+function shouldClientAudioFallback(err: unknown) {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return (
+    shouldClientFallback(err) ||
+    /storage|bucket|download|Unauthorized|오디오 경로/i.test(message)
+  );
+}
+
+export async function runTranscribeAudio(payload: {
+  blob: Blob;
+  mimeType: string;
+  storagePath?: string;
+}) {
+  if (payload.storagePath) {
+    try {
+      const res = await transcribeAudio({
+        data: { storagePath: payload.storagePath, mimeType: payload.mimeType },
+      });
+      if (res.ok) return res;
+      if (!shouldClientAudioFallback(res.error)) return res;
+    } catch (err) {
+      if (!shouldClientAudioFallback(err)) {
+        return { ok: false as const, error: failMessage(err, "음성 인식에 실패했습니다.") };
+      }
     }
   }
   try {
-    const text = await geminiAudio(payload);
+    const text = await geminiTranscribeMedia({
+      blob: payload.blob,
+      mimeType: payload.mimeType,
+    });
     return { ok: true as const, text };
   } catch (err) {
     return { ok: false as const, error: failMessage(err, "음성 인식에 실패했습니다.") };

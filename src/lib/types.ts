@@ -65,6 +65,14 @@ export type ActionItem = {
   segmentCode: string;
 };
 
+export type SessionAudio = {
+  storagePath: string;
+  mimeType: string;
+  filename: string;
+  sizeBytes: number;
+  durationSec: number | null;
+};
+
 export type SessionSummary = {
   id: string;
   projectId: string;
@@ -78,7 +86,9 @@ export type SessionSummary = {
   researcher: string;
   status: SessionStatus;
   headline: string;
+  minutesOverview: string;
   originalFilename: string;
+  audio: SessionAudio | null;
   tagLabels: string[];
   createdAt: string;
   updatedAt: string;
@@ -87,7 +97,6 @@ export type SessionSummary = {
 
 export type SessionDetail = SessionSummary & {
   originalText: string;
-  minutesOverview: string;
   minutesBody: string;
   minutesFollowups: string[];
   unresolved: string[];
@@ -98,17 +107,35 @@ export type SessionDetail = SessionSummary & {
   facts: Fact[];
 };
 
-export type LibraryHit = {
-  kind: "excerpt" | "theme" | "fact";
-  id: string;
+export type LibraryCaseFilter = {
+  q?: string;
+  tag?: string;
+  projectId?: string;
+};
+
+export type RelatedCase = {
   sessionId: string;
   sessionTitle: string;
   projectTitle: string;
   sessionDate: string | null;
+  headline: string;
+  reason: string;
+};
+
+export type ChatGroundedReply = {
+  answer: string;
+  relatedCases: RelatedCase[];
+};
+
+export type ChatCaseContext = {
+  sessionId: string;
   title: string;
-  body: string;
-  segmentCode: string;
-  tags: string[];
+  projectTitle: string;
+  sessionDate: string | null;
+  headline: string;
+  minutesOverview: string;
+  themes: Array<{ title: string; summary: string; quotes: Array<{ text: string; segmentId: string }> }>;
+  facts: Array<{ label: string; value: string; segmentCode: string }>;
 };
 
 export type CrossSummary = {
