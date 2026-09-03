@@ -1,0 +1,130 @@
+import { useState } from "react";
+import { MessageSquare, LoaderCircle, Send } from "lucide-react";
+import { useMutation } from "@tanstack/react-query";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { runProjectAssistant } from "@/lib/ai/run";
+import { listProjectAssistantContext } from "@/lib/firebase-db";
+import { useAuth } from "@/lib/auth-context";
+
+export function ChatModal({ projectId, projectTitle }: { projectId: string; projectTitle: string }) {
+  const { user } = useAuth();
+  const uid = user?.uid;
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const [history, setHistory] = useState<Array<{ role: "user" | "ai"; text: string }>>([]);
+
+  const askMut = useMutation({
+    mutationFn: async (question: string) => {
+      if (!uid) throw new Error("로그인이 필요합니다.");
+      const sessionsData = await listProjectAssistantContext(uid, projectId);
+      const recent = history
+        .slice(-6)
+        .map((m) => `${m.role === "user" ? "사용자" : "어시스턴트"}: ${m.text}`)
+        .join("\n");
+      const asked = recent ? `${recent}\n사용자: ${question}` : question;
+      return runProjectAssistant({ projectTitle, query: asked, sessions: sessionsData });
+    },
+    onSuccess: (res) => {
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      setHistory((prev) => [...prev, { role: "ai", text: res.answer }]);
+    },
+    onError: (err: Error) => {
+      toast.error(err.message);
+    },
+  });
+
+  const onSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const question = query.trim();
+    if (!question || askMut.isPending) return;
+    setHistory((prev) => [...prev, { role: "user", text: question }]);
+    askMut.mutate(question);
+    setQuery("");
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger asChild>
+        <Button variant="outline" className="gap-2">
+          <MessageSquare className="size-4" />
+          AI 어시스턴트에게 묻기
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-xl flex flex-col h-[80vh] p-0 overflow-hidden">
+        <DialogHeader className="px-6 py-4 border-b border-border bg-card shrink-0">
+          <DialogTitle>AI 리서치 어시스턴트</DialogTitle>
+          <DialogDescription>
+            분석·확정된 인터뷰를 바탕으로 Gemini가 답합니다.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-muted/20">
+          {history.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-sm text-muted-foreground text-center">
+              "A업종 사람들이 가장 많이 언급한 인력 부족 원인은 무엇인가요?" 처럼 질문해 보세요.
+            </div>
+          ) : (
+            history.map((msg, i) => (
+              <div
+                key={i}
+                className={`flex flex-col max-w-[85%] ${
+                  msg.role === "user" ? "ml-auto items-end" : "mr-auto items-start"
+                }`}
+              >
+                <span className="text-[11px] text-muted-foreground mb-1 px-1">
+                  {msg.role === "user" ? "나" : "AI 어시스턴트"}
+                </span>
+                <div
+                  className={`rounded-2xl px-4 py-2.5 text-sm whitespace-pre-wrap leading-relaxed ${
+                    msg.role === "user"
+                      ? "bg-primary text-primary-foreground rounded-tr-sm"
+                      : "bg-card border border-border rounded-tl-sm shadow-sm"
+                  }`}
+                >
+                  {msg.text}
+                </div>
+              </div>
+            ))
+          )}
+          {askMut.isPending && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground ml-2">
+              <LoaderCircle className="size-4 animate-spin" />
+              답변을 작성하고 있습니다...
+            </div>
+          )}
+        </div>
+
+        <form onSubmit={onSubmit} className="p-4 border-t border-border bg-card flex gap-2">
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="질문을 입력하세요..."
+            className="flex-1 rounded-full px-4"
+            disabled={askMut.isPending}
+          />
+          <Button
+            type="submit"
+            size="icon"
+            className="rounded-full shrink-0"
+            disabled={!query.trim() || askMut.isPending}
+          >
+            <Send className="size-4" />
+          </Button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}

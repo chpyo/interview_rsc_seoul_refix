@@ -1,0 +1,49 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function for user data isolation
+    function isOwner() {
+      return request.auth != null && request.auth.uid == resource.data.owner_uid;
+    }
+    
+    function canCreate(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /projects/{documentId} {
+      allow read, update, delete: if isOwner();
+      allow create: if canCreate(request.resource.data.owner_uid);
+    }
+    
+    match /sessions/{documentId} {
+      allow read, update, delete: if isOwner();
+      allow create: if canCreate(request.resource.data.owner_uid);
+    }
+    
+    match /segments/{documentId} {
+      allow read, update, delete: if isOwner();
+      allow create: if canCreate(request.resource.data.owner_uid);
+    }
+    
+    match /themes/{documentId} {
+      allow read, update, delete: if isOwner();
+      allow create: if canCreate(request.resource.data.owner_uid);
+    }
+    
+    match /excerpts/{documentId} {
+      allow read, update, delete: if isOwner();
+      allow create: if canCreate(request.resource.data.owner_uid);
+    }
+    
+    match /facts/{documentId} {
+      allow read, update, delete: if isOwner();
+      allow create: if canCreate(request.resource.data.owner_uid);
+    }
+    
+    match /tags/{documentId} {
+      allow read, update, delete: if isOwner();
+      allow create: if canCreate(request.resource.data.owner_uid);
+    }
+  }
+}

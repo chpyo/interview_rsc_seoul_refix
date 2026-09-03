@@ -1,0 +1,188 @@
+import { l as formatDateKo } from "./router-DC05m9h-.mjs";
+//#region node_modules/.nitro/vite/services/ssr/assets/minutes-export-ky5jc-m1.js
+function escapeHtml(value) {
+	return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function mdLiteToHtml(body) {
+	const lines = body.split("\n");
+	const out = [];
+	let para = [];
+	const flush = () => {
+		if (!para.length) return;
+		out.push(`<p>${escapeHtml(para.join(" "))}</p>`);
+		para = [];
+	};
+	for (const line of lines) {
+		const t = line.trim();
+		if (!t) {
+			flush();
+			continue;
+		}
+		if (t.startsWith("## ")) {
+			flush();
+			out.push(`<h2>${escapeHtml(t.slice(3))}</h2>`);
+			continue;
+		}
+		if (t.startsWith("# ")) {
+			flush();
+			out.push(`<h2>${escapeHtml(t.slice(2))}</h2>`);
+			continue;
+		}
+		if (t.startsWith("- ")) {
+			flush();
+			out.push(`<p>· ${escapeHtml(t.slice(2))}</p>`);
+			continue;
+		}
+		para.push(t);
+	}
+	flush();
+	return out.join("\n");
+}
+var PRINT_CSS = `
+  :root { color-scheme: light; }
+  body { font-family: "Noto Serif KR", "Apple Myungjo", serif; color: #1b1d1c; background: #fff; margin: 0; padding: 32px; line-height: 1.65; }
+  h1 { font-size: 22px; margin: 0 0 8px; letter-spacing: -0.02em; }
+  h2 { font-size: 16px; margin: 28px 0 10px; }
+  p, li { font-size: 14px; }
+  .meta { font-family: "IBM Plex Sans KR", sans-serif; font-size: 12px; color: #5c605d; margin-bottom: 24px; }
+  blockquote { margin: 8px 0 16px; padding: 8px 0 8px 14px; border-left: 3px solid #2f4f45; }
+  .src { font-family: ui-monospace, monospace; font-size: 11px; color: #6a6e6b; }
+  ul { padding-left: 18px; }
+  @media print { body { padding: 12mm; } }
+`;
+function wrapHtml(title, body) {
+	return `<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<title>${escapeHtml(title)}</title>
+<style>${PRINT_CSS}</style>
+</head>
+<body>
+${body}
+</body>
+</html>`;
+}
+function buildMinutesMarkdown(input) {
+	const s = input.session;
+	const lines = [
+		`# ${s.title} 회의록`,
+		"",
+		`- 프로젝트: ${s.projectTitle}`,
+		`- 유형: ${s.sessionKind}`,
+		`- 일자: ${formatDateKo(s.sessionDate)}`,
+		`- 조사자: ${s.researcher || "—"}`,
+		`- 업종: ${s.industry || "—"}`,
+		`- 지역: ${s.district || "—"}`,
+		`- 규모: ${s.sizeLabel || "—"}`,
+		`- 상태: ${s.status}`,
+		"",
+		"## 개요",
+		"",
+		s.minutesOverview || "(없음)",
+		"",
+		"## 논의 요지",
+		"",
+		s.minutesBody || "(없음)",
+		"",
+		"## 확인된 사실",
+		""
+	];
+	if (input.facts.length === 0) lines.push("(없음)", "");
+	else {
+		for (const f of input.facts) lines.push(`- ${f.label}: ${f.value}${f.segmentCode ? ` (${f.segmentCode})` : ""}`);
+		lines.push("");
+	}
+	lines.push("## 인용", "");
+	const quotes = input.themes.flatMap((t) => t.quotes.map((q) => ({
+		theme: t.title,
+		...q
+	})));
+	if (quotes.length === 0) lines.push("(없음)", "");
+	else for (const q of quotes) lines.push(`> ${q.text}`, `> — ${q.theme} · ${q.segmentId}`, "");
+	lines.push("## 후속 확인", "");
+	if (s.minutesFollowups.length === 0) lines.push("(없음)", "");
+	else for (const f of s.minutesFollowups) lines.push(`- ${f}`);
+	lines.push("", "## 태그", "", input.tags.join(", ") || "(없음)", "");
+	return lines.join("\n");
+}
+function buildMinutesHtml(input) {
+	const s = input.session;
+	const quotes = input.themes.flatMap((t) => t.quotes.map((q) => ({
+		theme: t.title,
+		...q
+	})));
+	const facts = input.facts.length === 0 ? "<p>(없음)</p>" : `<ul>${input.facts.map((f) => `<li>${escapeHtml(f.label)}: ${escapeHtml(f.value)}${f.segmentCode ? ` <span class="src">${escapeHtml(f.segmentCode)}</span>` : ""}</li>`).join("")}</ul>`;
+	const quoteHtml = quotes.length === 0 ? "<p>(없음)</p>" : quotes.map((q) => `<blockquote><p>${escapeHtml(q.text)}</p><p class="src">${escapeHtml(q.theme)} · ${escapeHtml(q.segmentId)}</p></blockquote>`).join("");
+	const follow = s.minutesFollowups.filter(Boolean).length === 0 ? "<p>(없음)</p>" : `<ul>${s.minutesFollowups.filter(Boolean).map((f) => `<li>${escapeHtml(f)}</li>`).join("")}</ul>`;
+	const body = `
+  <p class="meta">서울지역 인적자원개발위원회 · 현장베이스</p>
+  <h1>${escapeHtml(s.title)} 회의록</h1>
+  <p class="meta">
+    ${escapeHtml(s.projectTitle)} · ${escapeHtml(s.sessionKind)} · ${escapeHtml(formatDateKo(s.sessionDate))}<br/>
+    조사자 ${escapeHtml(s.researcher || "미기재")}
+    ${s.industry ? ` · ${escapeHtml(s.industry)}` : ""}
+    ${s.district ? ` · ${escapeHtml(s.district)}` : ""}
+    ${s.sizeLabel ? ` · ${escapeHtml(s.sizeLabel)}` : ""}
+  </p>
+  <h2>개요</h2>
+  <p>${escapeHtml(s.minutesOverview || "(없음)")}</p>
+  <h2>논의 요지</h2>
+  ${s.minutesBody ? mdLiteToHtml(s.minutesBody) : "<p>(없음)</p>"}
+  <h2>확인된 사실</h2>
+  ${facts}
+  <h2>인용</h2>
+  ${quoteHtml}
+  <h2>후속 확인</h2>
+  ${follow}
+  <h2>태그</h2>
+  <p>${escapeHtml(input.tags.join(", ") || "(없음)")}</p>
+  `;
+	return wrapHtml(`${s.title} 회의록`, body);
+}
+function buildQuotePackHtml(input) {
+	const title = "현장베이스 인용집";
+	const grouped = /* @__PURE__ */ new Map();
+	for (const hit of input.hits) {
+		const list = grouped.get(hit.sessionId) ?? [];
+		list.push(hit);
+		grouped.set(hit.sessionId, list);
+	}
+	const sections = [...grouped.values()].map((hits) => {
+		const first = hits[0];
+		const items = hits.map((h) => {
+			return `<h2>${escapeHtml(h.kind === "excerpt" ? "인용" : h.kind === "theme" ? "주제" : "사실")} · ${escapeHtml(h.title)}</h2>
+        <blockquote><p>${escapeHtml(h.body)}</p>
+        <p class="src">${h.segmentCode ? escapeHtml(h.segmentCode) : ""}</p></blockquote>`;
+		}).join("");
+		return `<p class="meta">${escapeHtml(first.projectTitle)} · ${escapeHtml(first.sessionTitle)} · ${escapeHtml(formatDateKo(first.sessionDate))}</p>${items}`;
+	});
+	return wrapHtml(title, `
+    <p class="meta">서울지역 인적자원개발위원회 · 현장베이스</p>
+    <h1>${title}</h1>
+    <p class="meta">검색어: ${escapeHtml(input.query || "(전체)")}${input.tag ? ` · 태그 ${escapeHtml(input.tag)}` : ""} · ${input.hits.length}건</p>
+    ${sections.join("") || "<p>항목이 없습니다.</p>"}
+  `);
+}
+function downloadText(filename, content, mime = "text/plain;charset=utf-8") {
+	const blob = new Blob([content], { type: mime });
+	const url = URL.createObjectURL(blob);
+	const a = document.createElement("a");
+	a.href = url;
+	a.download = filename;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+function downloadHtml(filename, html) {
+	downloadText(filename, html, "text/html;charset=utf-8");
+}
+/** Word/한글 open this as a document. */
+function downloadWordDoc(filename, html) {
+	downloadText(filename, `<html xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:w="urn:schemas-microsoft-com:office:word"
+ xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>export</title></head>
+<body>${html.replace(/^[\s\S]*<body>/i, "").replace(/<\/body>[\s\S]*$/i, "")}</body></html>`, "application/msword;charset=utf-8");
+}
+//#endregion
+export { downloadText as a, downloadHtml as i, buildMinutesMarkdown as n, downloadWordDoc as o, buildQuotePackHtml as r, buildMinutesHtml as t };

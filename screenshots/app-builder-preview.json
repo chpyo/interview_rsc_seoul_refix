@@ -1,0 +1,36 @@
+{
+  "url": "http://127.0.0.1:8080/",
+  "viewports": {
+    "desktop": {
+      "width": 1280,
+      "height": 800,
+      "status": 200,
+      "title": "현장베이스",
+      "hasCanvas": false,
+      "bodyTextLen": 98,
+      "bodyTextHash": "db6a6e3d764034bff7d2e3d3f15535bf9360ced6a954788dec8bba4d9cbba63a",
+      "bodyTextPrefix": "현장베이스 기업 현장조사 근거 노트 조사 자료실 새 녹취 Google 로그인 로그인이 필요합니다 현장베이스를 사용하",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview.png"
+    },
+    "mobile": {
+      "width": 390,
+      "height": 844,
+      "status": 200,
+      "title": "현장베이스",
+      "hasCanvas": false,
+      "bodyTextLen": 84,
+      "bodyTextHash": "296d8c845dbbc42933808d2ebc1bdb2504ec173ef3913ae755c6f59ae87f7829",
+      "bodyTextPrefix": "현장베이스 Google 로그인 로그인이 필요합니다 현장베이스를 사용하려면 Google 계정으로 로그인해주세요. Go",
+      "horizontalOverflow": false,
+      "consoleErrors": [],
+      "pageErrors": [],
+      "screenshot": "/workspace/screenshots/app-builder-preview-mobile.png"
+    }
+  },
+  "brandWarnings": [],
+  "authWarnings": [],
+  "verdictFile": "/workspace/screenshots/app-builder-preview.json"
+}
