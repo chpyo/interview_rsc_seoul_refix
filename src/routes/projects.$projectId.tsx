@@ -193,11 +193,11 @@ function ProjectPage() {
         </TabsList>
         <TabsContent value="sessions">
           {sessions.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border bg-card px-4 py-10 text-center text-sm text-muted-foreground">
-              이 프로젝트에 올린 녹취가 없습니다.
+            <div className="py-8 text-sm leading-relaxed text-muted-foreground">
+              이 프로젝트에 올린 녹취가 없습니다. 새 녹취로 올리세요.
             </div>
           ) : (
-            <ul className="divide-y divide-border overflow-hidden rounded-xl border border-border bg-card">
+            <ul className="divide-y divide-border border-y border-border">
               {sessions.map((s) => (
                 <li key={s.id}>
                   <Link
